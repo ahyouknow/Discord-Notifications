@@ -208,34 +208,31 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	channelID := m.ChannelID
 
 	// Check if server or channel is blocking all notifications
-	for _, id := range noNotifications {
-		if (id == guildID) || (id == channelID){
-			return
-		}
-	}
-
-
-	// Check if channel or server is in mentions only and sends the notification if the user is mentioned
-	for _, id := range mentionsOnly {
-		if (id == guildID) || (id == channelID){
-			for _, user := range m.Mentions {
-				if (user.ID == s.State.User.ID) {
-					sendNotification(s, guildID)
-					return
-				}
-			}
-			return
-		}
+	if multipleCheckIn(guildID, channelID, noNotifications) {
+		return
 	}
 
 	// Check if server is suppressing @everyone and @here
 	if m.MentionEveryone {
-		for _, id := range suppressEveryone {
-			if (id == guildID) {
+		if checkIn(guildID, suppressEveryone) {
+			return
+		} else {
+			sendNotification(s, guildID)
+			return
+		}
+	}
+
+	// Check if channel or server is in mentions only and sends the notification if the user is mentioned
+	if multipleCheckIn(guildID, channelID, mentionsOnly){
+		for _, user := range m.Mentions {
+			if (user.ID == s.State.User.ID) {
+				sendNotification(s, guildID)
 				return
 			}
 		}
+		return
 	}
+
 	sendNotification(s, guildID)
 }
 
@@ -262,3 +259,22 @@ func sendNotification(s *discordgo.Session, guildID string) {
 	hello.Show()
 }
 
+// checks if an ID is present in array
+func checkIn(id string, ids []string) (bool) {
+	for _, checkid := range ids {
+		if checkid == id {
+			return true
+		}
+	}
+	return false
+}
+
+// Checks if either ID is in the array
+func multipleCheckIn(idOne, idTwo string, ids []string) (bool) {
+	for _, checkid := range ids {
+		if (checkid == idOne) || (checkid == idTwo) {
+			return true
+		}
+	}
+	return false
+}

@@ -18,8 +18,8 @@ import (
 
 // Variables for categorizing guilds and channels
 var (
-	mentionsOnly []string
 	suppressEveryone []string
+	mentionsOnly []string
 	noNotifications []string
 )
 
@@ -52,6 +52,7 @@ func main() {
 
 	dg.AddHandler(messageCreate)
 	dg.AddHandler(ready)
+	dg.AddHandler(UserGuildSettingsUpdate)
 
 	// Open a websocket connection to Discord and begin listening.
 	err = dg.Open()
@@ -162,7 +163,9 @@ func ready(s *discordgo.Session, e *discordgo.Ready) {
 		for index, guildSettings := range e.UserGuildSettings {
 			if (guild.ID == guildSettings.GuildID){
 				sortGuildNotifications(guildSettings)
-				sortChannelNotifications(guildSettings.ChannelOverrides)
+				for _, channelSettings := range guildSettings.ChannelOverrides {
+					sortChannelNotifications(channelSettings)
+				}
 				break
 			}
 
@@ -188,14 +191,12 @@ func sortGuildNotifications(settings *discordgo.UserGuildSettings) {
 }
 
 // Categroizes which channels have which notification settings
-func sortChannelNotifications(channels []*discordgo.UserGuildSettingsChannelOverride) {
-	for _, channel := range channels {
-		// Muted Channels function the same as the nothing setting
-		if channel.Muted || (channel.MessageNotifications == 2) {
-			noNotifications = append(noNotifications, channel.ChannelID)
-		} else if (channel.MessageNotifications == 1) {
-			mentionsOnly = append(mentionsOnly, channel.ChannelID)
-		}
+func sortChannelNotifications(channel *discordgo.UserGuildSettingsChannelOverride) {
+	// Muted Channels function the same as the nothing setting
+	if channel.Muted || (channel.MessageNotifications == 2) {
+		noNotifications = append(noNotifications, channel.ChannelID)
+	} else if (channel.MessageNotifications == 1) {
+		mentionsOnly = append(mentionsOnly, channel.ChannelID)
 	}
 }
 
@@ -214,11 +215,12 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	// Check if server is suppressing @everyone and @here
 	if m.MentionEveryone {
-		if checkIn(guildID, suppressEveryone) {
-			return
-		} else {
-			sendNotification(s, guildID)
-			return
+		for _, id := range suppressEveryone {
+			if id == guildID {
+				return
+			}
+		sendNotification(s, guildID)
+		return
 		}
 	}
 
@@ -259,14 +261,36 @@ func sendNotification(s *discordgo.Session, guildID string) {
 	hello.Show()
 }
 
+func UserGuildSettingsUpdate(s *discordgo.Session, settingsUpdate *discordgo.UserGuildSettingsUpdate) {
+	if removeFrom(settingsUpdate.GuildID, suppressEveryone) {
+		suppressEveryone = suppressEveryone[:len(suppressEveryone)-1]
+	}
+	// Check first if server or channel was muted then check the other notification
+	// After removing old settings apply new settings
+	if removeFrom(settingsUpdate.GuildID, mentionsOnly) {
+		mentionsOnly = mentionsOnly[:len(mentionsOnly)-1]
+	} else if removeFrom(settingsUpdate.GuildID, noNotifications) {
+		noNotifications = noNotifications[:len(noNotifications)-1]
+	}
+	sortGuildNotifications(settingsUpdate.UserGuildSettings)
+	for _, channelSettings := range settingsUpdate.ChannelOverrides {
+		if removeFrom(channelSettings.ChannelID, noNotifications) {
+			noNotifications = noNotifications[:len(noNotifications)-1]
+		} else if removeFrom(channelSettings.ChannelID, mentionsOnly) {
+			mentionsOnly = mentionsOnly[:len(mentionsOnly)-1]
+		}
+		sortChannelNotifications(channelSettings)
+	}
+}
+
 // checks if an ID is present in array
-func checkIn(id string, ids []string) (bool) {
-	for _, checkid := range ids {
+func checkIn(id string, ids []string) (bool, int) {
+	for index, checkid := range ids {
 		if checkid == id {
-			return true
+			return true, index
 		}
 	}
-	return false
+	return false, len(ids)
 }
 
 // Checks if either ID is in the array
@@ -278,3 +302,16 @@ func multipleCheckIn(idOne, idTwo string, ids []string) (bool) {
 	}
 	return false
 }
+
+// Removes id from array returns true if element was in array false if not
+func removeFrom(id string, ids []string) (bool) {
+	boolean, index := checkIn(id, ids)
+	if boolean {
+		ids[index] = ids[len(ids)-1]
+		ids[len(ids)-1] = ""
+		return true
+	} else {
+		return false
+	}
+}
+
